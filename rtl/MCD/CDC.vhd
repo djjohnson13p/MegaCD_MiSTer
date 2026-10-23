@@ -8,6 +8,7 @@ entity CDC is
 		CLK			: in std_logic;
 		RESET_N		: in std_logic;
 		ENABLE		: in std_logic;
+		PALSW			: in std_logic := '0';
 		CLKEN_P 		: in std_logic;
 		CLKEN_N 		: in std_logic;
 		
@@ -158,13 +159,66 @@ architecture rtl of CDC is
 	signal DEC_HEAD01 : std_logic_vector(15 downto 0);
 	signal DEC_HEAD23 : std_logic_vector(15 downto 0);
 	
---	signal DECI_WAIT_CNT : unsigned(15 downto 0);
---	signal DECI_SET : std_logic;
+	-- clk_sys is 53.693175 MHz (NTSC) or 53.203423 MHz (PAL).
+	-- Decoder status continues at 75 Hz when no new sectors arrive. DECI is
+	-- active for approximately 40% of the frame, or until STAT3 is read.
+	signal DEC_TIMER : natural range 0 to 715908;
+	signal DEC_PERIOD : natural range 709379 to 715909;
+	signal DEC_RELEASE : natural range 283752 to 286364;
 	signal OLD_WRRQ : std_logic;
 	
 begin
 
 	EN <= ENABLE and (CLKEN_N or CLKEN_P);
+	DEC_PERIOD <= 709379 when PALSW = '1' else 715909;
+	DEC_RELEASE <= 283752 when PALSW = '1' else 286364;
+
+	process( RESET_N, CLK )
+	begin
+		if RESET_N = '0' then
+			DEC_TIMER <= 0;
+			IFSTAT(DECI) <= '1';
+		elsif rising_edge(CLK) then
+			if ENABLE = '1' then
+				if CTRL0(DECEN) = '0' then
+					DEC_TIMER <= 0;
+					IFSTAT(DECI) <= '1';
+				elsif EN = '1' and CD_WR = '1' and CD_WR_OLD = '0' and WORD_CNT = 0 then
+					-- The HPS delivers complete sectors in bursts. Start a new
+					-- decoder interval at the first sync word, so an idle expiry
+					-- does not announce the preceding header during that burst.
+					DEC_TIMER <= 0;
+				elsif DEC_TIMER >= DEC_PERIOD - 1 then
+					DEC_TIMER <= 0;
+					if CTRL1(SYIEN) = '1' then
+						IFSTAT(DECI) <= '0';
+					end if;
+				else
+					DEC_TIMER <= DEC_TIMER + 1;
+					if DEC_TIMER = DEC_RELEASE - 1 then
+						IFSTAT(DECI) <= '1';
+					end if;
+				end if;
+
+				if EN = '1' then
+					if REG_RD = '1' and AR = x"F" then
+						IFSTAT(DECI) <= '1';
+					end if;
+					-- SYIEN inserts missing syncs; SYDEN also allows real-sector
+					-- syncs in hunt mode, without enabling idle periodic events.
+					if CTRL0(DECEN) = '1' and (CTRL1(SYIEN) = '1' or CTRL1(SYDEN) = '1') and
+					   CD_WR = '1' and CD_WR_OLD = '0' and WORD_CNT = 2352/2-1 then
+						DEC_TIMER <= 0;
+						IFSTAT(DECI) <= '0';
+					end if;
+					if REG_WR = '1' and (AR = x"F" or (AR = x"A" and DI(DECEN) = '0')) then
+						DEC_TIMER <= 0;
+						IFSTAT(DECI) <= '1';
+					end if;
+				end if;
+			end if;
+		end if;
+	end process;
 	
 	process( RESET_N, CLK )
 	begin
@@ -288,7 +342,6 @@ begin
 		if RESET_N = '0' then
 			PT <= (others => '0');
 			WA <= (others => '0');
-			IFSTAT(DECI) <= '1';
 			STAT3(VALST) <= '1';
 			HEAD0 <= (others => '0');
 			HEAD1 <= (others => '0');
@@ -321,14 +374,12 @@ begin
 						when x"D" =>			--R13 PTH
 							PT(15 downto 8) <= DI;
 						when x"F" =>			--R15 RESET
-							IFSTAT(DECI) <= '1';
 							STAT3(VALST) <= '1';
 						when others => null;
 					end case;
 				elsif REG_RD = '1' then
 					case AR is
 						when x"F" =>			--R15 STAT3
-							IFSTAT(DECI) <= '1';
 							STAT3(VALST) <= '1';
 						when others => null;
 					end case;
@@ -366,7 +417,6 @@ begin
 							RAM_POS <= RAM_POS + 2;
 						elsif WORD_CNT = 2352/2-1 then
 --							DECI_SET <= '1';
-							IFSTAT(DECI) <= '0';
 							STAT3(VALST) <= '0';
 						end if;
 						
