@@ -163,15 +163,15 @@ architecture rtl of CDC is
 	-- Decoder status continues at 75 Hz when no new sectors arrive. DECI is
 	-- active for approximately 40% of the frame, or until STAT3 is read.
 	signal DEC_TIMER : natural range 0 to 715908;
-	signal DEC_PERIOD : natural range 709379 to 715909;
-	signal DEC_RELEASE : natural range 283752 to 286364;
+	signal DEC_LAST : natural range 709378 to 715908;
+	signal DEC_RELEASE_LAST : natural range 283751 to 286363;
 	signal OLD_WRRQ : std_logic;
 	
 begin
 
 	EN <= ENABLE and (CLKEN_N or CLKEN_P);
-	DEC_PERIOD <= 709379 when PALSW = '1' else 715909;
-	DEC_RELEASE <= 283752 when PALSW = '1' else 286364;
+	DEC_LAST <= 709378 when PALSW = '1' else 715908;
+	DEC_RELEASE_LAST <= 283751 when PALSW = '1' else 286363;
 
 	process( RESET_N, CLK )
 	begin
@@ -188,14 +188,14 @@ begin
 					-- decoder interval at the first sync word, so an idle expiry
 					-- does not announce the preceding header during that burst.
 					DEC_TIMER <= 0;
-				elsif DEC_TIMER >= DEC_PERIOD - 1 then
+				elsif DEC_TIMER >= DEC_LAST then
 					DEC_TIMER <= 0;
 					if CTRL1(SYIEN) = '1' then
 						IFSTAT(DECI) <= '0';
 					end if;
 				else
 					DEC_TIMER <= DEC_TIMER + 1;
-					if DEC_TIMER = DEC_RELEASE - 1 then
+					if DEC_TIMER = DEC_RELEASE_LAST then
 						IFSTAT(DECI) <= '1';
 					end if;
 				end if;
