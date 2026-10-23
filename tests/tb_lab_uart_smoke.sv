@@ -47,7 +47,7 @@ task automatic receive_byte(output reg [7:0] value);
         // Finish just before the stop cell ends, so a back-to-back start is seen.
         #(BIT_NS*(99-SAMPLE_PERCENT)/100.0);
         if (tx !== 1) $fatal(1, "Stop bit ended early");
-        receiving = 0;
+        // Keep the independent clock monitor armed through the remaining 1%.
     end
 endtask
 
