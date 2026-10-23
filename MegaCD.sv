@@ -26,7 +26,18 @@ module emu
 );
 
 assign ADC_BUS  = 'Z;
+`ifdef LAB_UART_SMOKE
+// Fixed input clock: serial timing is independent of PAL/NTSC PLL changes.
+lab_uart_smoke_tx lab_uart_smoke
+(
+	.clk(CLK_50M),
+	.reset(RESET),
+	.tx(UART_TXD)
+);
+assign {UART_RTS, UART_DTR} = 0;
+`else
 assign {UART_RTS, UART_TXD, UART_DTR} = 0;
+`endif
 assign BUTTONS   = {bk_reload, 1'b0};
 assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
 
