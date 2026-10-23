@@ -6,15 +6,25 @@ parameter integer START_CYCLES = 37;
 parameter integer GAP_CYCLES = 41;
 parameter integer FRAMES = 4;
 parameter integer SAMPLE_PERCENT = 50;
-localparam real CLOCK_NS = 10.0;
+localparam real CLOCK_NS = 1.0e9/SOURCE_CLOCK_HZ;
 localparam real BIT_NS = DIV * CLOCK_NS;
 reg clk = 0;
 reg reset = 1;
 wire tx;
 integer packets = 0;
-real reset_released, last_start, previous_stop;
+integer clock_cycles = 0;
+integer reset_release_cycle, last_start_cycle, previous_start_cycle, previous_stop_cycle;
+reg receiving = 0;
 
 always #(CLOCK_NS/2.0) clk = ~clk;
+always @(posedge clk) clock_cycles <= clock_cycles + 1;
+// Observe every stable clock sample of the full stop cell, independently of
+// the bit-centre receiver. The next character may start at its exact end.
+always @(negedge clk) begin
+    if (receiving && !reset && clock_cycles-last_start_cycle >= 9*DIV &&
+        clock_cycles-last_start_cycle < 10*DIV && tx !== 1)
+        $fatal(1, "Stop cell was not continuously at mark");
+end
 lab_uart_smoke_tx #(.CLOCK_HZ(SOURCE_CLOCK_HZ), .BAUD(9600),
     .STARTUP_CYCLES(START_CYCLES), .GAP_CYCLES(GAP_CYCLES), .FRAME_COUNT(FRAMES)) dut
     (.clk(clk), .reset(reset), .tx(tx));
@@ -23,7 +33,8 @@ task automatic receive_byte(output reg [7:0] value);
     integer bit_number;
     begin
         @(negedge tx);
-        last_start = $realtime;
+        last_start_cycle = clock_cycles;
+        receiving = 1;
         #(BIT_NS*SAMPLE_PERCENT/100.0);
         if (tx !== 0) $fatal(1, "Start bit missing");
         for (bit_number=0; bit_number<8; bit_number=bit_number+1) begin
@@ -36,6 +47,7 @@ task automatic receive_byte(output reg [7:0] value);
         // Finish just before the stop cell ends, so a back-to-back start is seen.
         #(BIT_NS*(99-SAMPLE_PERCENT)/100.0);
         if (tx !== 1) $fatal(1, "Stop bit ended early");
+        receiving = 0;
     end
 endtask
 
@@ -52,18 +64,18 @@ task automatic receive_burst;
                 receive_byte(actual);
                 if (byte_number == 0) begin
                     if (frame_number == 0) begin
-                        if (last_start - reset_released < ((START_CYCLES>0 ? START_CYCLES : 1)+1)*CLOCK_NS ||
-                            last_start - reset_released > ((START_CYCLES>0 ? START_CYCLES : 1)+2)*CLOCK_NS)
+                        if (last_start_cycle-reset_release_cycle != (START_CYCLES>0 ? START_CYCLES : 1)+2)
                             $fatal(1, "Startup interval or synchronized reset release differs");
-                    end else if (last_start - previous_stop < (GAP_CYCLES>0 ? GAP_CYCLES : 1)*CLOCK_NS-0.1 ||
-                                 last_start - previous_stop > (GAP_CYCLES>0 ? GAP_CYCLES : 1)*CLOCK_NS+0.1)
+                    end else if (last_start_cycle-previous_stop_cycle != (GAP_CYCLES>0 ? GAP_CYCLES : 1))
                         $fatal(1, "Inter-frame idle interval differs");
-                end
+                end else if (last_start_cycle-previous_start_cycle != 10*DIV)
+                    $fatal(1, "Inter-byte interval is not exactly ten full bit cells");
+                previous_start_cycle = last_start_cycle;
                 expected = golden >> ((15-byte_number)*8);
                 if (actual !== expected)
                     $fatal(1, "Frame %0d byte %0d expected %02x got %02x", frame_number, byte_number, expected, actual);
             end
-            previous_stop = last_start + 10*BIT_NS;
+            previous_stop_cycle = last_start_cycle + 10*DIV;
             packets = packets + 1;
         end
         // A finite burst must remain at idle mark indefinitely after completion.
@@ -80,7 +92,7 @@ initial begin
         SAMPLE_PERCENT < 40 || SAMPLE_PERCENT > 60) $fatal(1, "Invalid test case");
     repeat(4) @(negedge clk);
     reset = 0;
-    reset_released = $realtime;
+    reset_release_cycle = clock_cycles;
     receive_burst();
 
     // Assert reset partway through a character; discard that partial character.
@@ -88,14 +100,14 @@ initial begin
     @(negedge clk); reset = 1;
     repeat(4) @(negedge clk);
     reset = 0;
-    reset_released = $realtime;
+    reset_release_cycle = clock_cycles;
     @(negedge tx);
     #(BIT_NS*3.1);
     reset = 1;
     repeat(4) @(negedge clk);
     if (tx !== 1) $fatal(1, "Reset did not return to idle mark");
     reset = 0;
-    reset_released = $realtime;
+    reset_release_cycle = clock_cycles;
     receive_burst();
     $display("UART_SMOKE_PASS frames=%0d DIV=%0d sample=%0d", packets, DIV, SAMPLE_PERCENT);
     $finish;
