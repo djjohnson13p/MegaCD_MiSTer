@@ -14,7 +14,7 @@ The existing 50 MHz constraint remains unchanged.
 
 At default parameters the serializer sends 9600 baud, 8 data bits LSB first,
 no parity, one stop bit, idle high. Integer rounding gives 5208 input clocks
-per bit, approximately 9600.6144 baud (+0.0064%). It waits two seconds after
+per bit, approximately 9600.6144 baud (+0.0064%). It waits ten seconds after
 the synchronized release of core RESET, sends four 16-byte packets with
 250 ms idle gaps, and then remains idle. RESET assertion aborts an active
 character; release restarts the bounded four-packet burst from sequence zero.
@@ -56,11 +56,23 @@ No bootloader image provenance or live register read is claimed.
 The installed `/usr/sbin/uartmode` helper was read as data. It manages ttyS1
 services; it does not configure the HPS pinmux. It can kill existing ttyS1
 users, so it must not be invoked merely to prepare a debug receiver. Main
-calls it during core initialization. No UART/MIDI configuration entry is
-added by this variant. A future receive experiment must account for existing
-services, raw 9600 8N1 settings, CLOCAL/carrier and hardware-flow-control
-settings, and the receiver's lifetime around core loading; this preparation
-does not open or configure the TTY, start/stop services or change control.
+calls SetUARTMode(0), then the selected mode, after releasing core reset in
+the release-associated source. The installed script's mode-zero branch can
+call kill_all when its /tmp/uartmode* file test succeeds, terminating ttyS1
+users. A receiver opened before core loading could therefore be killed by
+Main's automatic helper call even if the receiver never invokes that helper.
+
+A future receive experiment must wait for the controlled core load and
+Main's automatic UART setup to finish, then check for conflicting users and
+arm an exclusive, bounded receiver before the first TX start. The ten-second
+startup provides scheduling slack; it is not a guarantee that Main completed
+setup. If completion and receiver readiness cannot be established in that
+window, abort and classify the capture as inconclusive. No UART/MIDI menu or
+configuration change is introduced to obtain the debug route. The receiver
+must use O_NOCTTY/nonblocking receive, save and restore termios, deliberately
+select raw 9600 8N1/CLOCAL without hardware flow control, write no UART data,
+and never invoke uartmode, kill other users, or start/stop services. This
+preparation does not open or configure the TTY or change control.
 
 A real bounded, provenance-bound receiver capture is required before
 investing in the full diagnostic ring. Simulation cannot prove the HPS route,

@@ -3,7 +3,7 @@
 module lab_uart_smoke_tx #(
     parameter integer CLOCK_HZ = 50_000_000,
     parameter integer BAUD = 9_600,
-    parameter integer STARTUP_CYCLES = 100_000_000,
+    parameter integer STARTUP_CYCLES = 500_000_000,
     parameter integer GAP_CYCLES = 12_500_000,
     parameter integer FRAME_COUNT = 4
 )(
