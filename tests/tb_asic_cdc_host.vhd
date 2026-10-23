@@ -31,12 +31,19 @@ architecture test of tb_asic_cdc_host is
   signal cdc_hdi, cdc_do, ram_di : std_logic_vector(7 downto 0);
   signal cdc_hrd_n, cdc_dten_n, cdc_wait_n : std_logic;
   signal ram_a : std_logic_vector(15 downto 0);
+  function ram_byte(constant address : natural) return std_logic_vector is
+  begin
+    -- Physical RAM has 14 address bits. Include the high six in the pattern so
+    -- an incorrect smaller wrap boundary cannot masquerade as correct data.
+    return std_logic_vector(to_unsigned(address mod 256,8) xor
+                            to_unsigned((address/256) mod 64,8) xor x"A5");
+  end function;
 begin
   clk <= not clk after CLOCK_PERIOD/2;
   -- One registered RAM read, with unique byte pairs for advancement checks.
   process(clk) begin
     if rising_edge(clk) then
-      ram_di <= std_logic_vector(unsigned(ram_a(7 downto 0)) xor x"A5");
+      ram_di <= ram_byte(to_integer(unsigned(ram_a)));
     end if;
   end process;
 
@@ -142,8 +149,7 @@ begin
     end procedure;
     function word_at(constant offset : natural) return std_logic_vector is
     begin
-      return std_logic_vector(to_unsigned((SOURCE_ADDR+offset) mod 256,8) xor x"A5") &
-             std_logic_vector(to_unsigned((SOURCE_ADDR+offset+1) mod 256,8) xor x"A5");
+      return ram_byte(SOURCE_ADDR+offset) & ram_byte(SOURCE_ADDR+offset+1);
     end function;
   begin
     assert TRANSFER_BYTES >= 8 and TRANSFER_BYTES <= 4096 and (TRANSFER_BYTES mod 2) = 0
