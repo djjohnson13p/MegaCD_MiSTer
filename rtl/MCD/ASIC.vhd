@@ -259,6 +259,7 @@ architecture rtl of ASIC is
 	signal DMNA_SET 					: std_logic;
 	signal MODE_REQ 					: std_logic;
 	signal DMA_ADDR_SET 				: std_logic;
+	signal CDC_MODE_SET 				: std_logic;
 	signal VW_SET 						: std_logic;
 	signal TIME_CLK_CNT 				: unsigned(8 downto 0);
 	signal TIMER 						: unsigned(7 downto 0);
@@ -392,7 +393,6 @@ begin
 			if EN = '1' then
 				if DMA_ADDR_SET = '1' then
 					DMA_ADDR <= DMAA(18 downto 3) & "00";
-					EDT <= '0';
 					DS <= DS_IDLE;
 				end if;
 				
@@ -405,13 +405,12 @@ begin
 								
 								DMA_RUN <= DD(2);
 							end if;
-							EDT <= '0';
 						elsif CDC_DTEN_N = '1' then
 							DMA_RUN <= '0';
 							if DMA_RUN = '1' and DD(2) = '1' then
 								DSR <= '0';
+								EDT <= '1';
 							end if;
-							EDT <= '1';
 						end if;
 						
 					when DS_CDC_READ =>
@@ -456,6 +455,11 @@ begin
 						end case;
 						
 					when DS_WRITE_WAIT =>
+						-- Host transfers finish at the CDC while the last word is
+						-- still buffered here. EDT must not wait for its CPU read.
+						if CDC_DTEN_N = '1' and (DD = "010" or DD = "011") then
+							EDT <= '1';
+						end if;
 						case DD is
 							when "010" =>
 								if MAIN_CPU_CDC_READ = '1' then
@@ -493,6 +497,12 @@ begin
 						
 					when others => null;
 				end case;
+				-- EDT is a gate-array latch, cleared by mode writes rather than
+				-- idle DTEN, DTACK, CDC reset, or DMA destination address writes.
+				if CDC_MODE_SET = '1' then
+					EDT <= '0';
+					DSR <= '0';
+				end if;
 			end if;
 		end if;
 	end process;
@@ -565,7 +575,8 @@ begin
 							if EXT_UDS_N = '0' then
 								HIB(15 downto 8) <= EXT_VDI(15 downto 8);
 							end if;
-						when "00100" => null;	--$A12008 CDC host data (read only)
+						when "00100" =>			--$A12008 CDC host data: writes skip a word
+							MAIN_CPU_CDC_READ <= '1';
 						when "00101" => null;	--$A1200A Reserved
 						when "00110" => null;	--$A1200C Stop watch (read only)
 						when "00111" =>			--$A1200E Communication flag
@@ -805,6 +816,7 @@ begin
 			SBA <= (others => (others => '0'));
 			SUB_RST_EXEC <= '0';
 			DMA_ADDR_SET <= '0';
+			CDC_MODE_SET <= '0';
 			VW_SET <= '0';
 			TIME_CLK_CNT <= (others => '0');
 			TIMER <= (others => '0');
@@ -831,6 +843,7 @@ begin
 				end if;
 				
 				DMA_ADDR_SET <= '0';
+				CDC_MODE_SET <= '0';
 				VW_SET <= '0';
 				FD_WR <= '0';
 				
@@ -886,11 +899,13 @@ begin
 							when "0000010" =>			--$FF8004 CDC Mode/CDC register address (extern)
 								if S68K_UDS_N = '0' then
 									DD <= S68K_DI(10 downto 8);
+									CDC_MODE_SET <= '1';
 									DMAA <= (others => '0');
 									DMA_ADDR_SET <= '1';
 								end if;
 							when "0000011" => null;	--$FF8006 CDC register data (extern)
-							when "0000100" =>	null;	--$FF8008 CDC host data (read only)
+							when "0000100" =>			--$FF8008 CDC host data: writes skip a word
+								SUB_CPU_CDC_READ <= '1';
 							when "0000101" =>			--$FF800A CDC DMA address
 								DMAA(18 downto 3) <= S68K_DI(15 downto 0);
 								DMA_ADDR_SET <= '1';
